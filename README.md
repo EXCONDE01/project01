@@ -103,6 +103,23 @@ npm start
 # open http://localhost:8787
 ```
 
+## Deploying to Vercel
+
+The app runs on Vercel as a static frontend plus two serverless functions:
+
+| Path | Runs |
+| --- | --- |
+| `/api/chat` | `api/chat.js` → `server/chat.js` → `server/agent.js` |
+| `/api/health` | `api/health.js` → `server/health.js` |
+
+`vercel.json` sets the Vite build (`npm run build` → `dist/`) and a 60 second
+function timeout. The Express server in `server/index.js` stays for local use and
+`npm start`; both it and the serverless functions share the same handler code.
+
+Import the repository in Vercel and make sure **Settings → Git → Production
+Branch** matches a branch that exists (this repo deploys `main`; `master` is
+pushed alongside it).
+
 ## Connecting a real model
 
 The interface and protocol are provider-agnostic. To make Scout a real agent:

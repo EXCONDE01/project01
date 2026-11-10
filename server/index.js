@@ -2,8 +2,8 @@ import express from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runAgent } from "./agent.js";
-import { toolCatalog } from "./tools.js";
+import { normalizeMessages, streamAgent } from "./chat.js";
+import { healthPayload } from "./health.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(currentDir, "..");
@@ -15,89 +15,18 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "256kb" }));
 
 app.get("/api/health", (_request, response) => {
-  response.json({
-    status: "ok",
-    provider: "mock",
-    model: "scout-mock-1",
-    tools: toolCatalog.map(({ name, label, description }) => ({
-      name,
-      label,
-      description,
-    })),
-    now: new Date().toISOString(),
-  });
+  response.json(healthPayload());
 });
 
 app.post("/api/chat", async (request, response) => {
-  const rawMessages = request.body?.messages;
+  const { messages, error } = normalizeMessages(request.body?.messages);
 
-  if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-    response.status(400).json({ error: "A non-empty messages array is required." });
+  if (error) {
+    response.status(400).json({ error });
     return;
   }
 
-  const messages = rawMessages
-    .filter(
-      (message) =>
-        message && (message.role === "user" || message.role === "assistant"),
-    )
-    .map((message) => ({
-      role: message.role,
-      content:
-        typeof message.content === "string"
-          ? message.content.slice(0, 8000)
-          : "",
-    }))
-    .filter((message) => message.content.trim().length > 0)
-    .slice(-24);
-
-  if (
-    messages.length === 0 ||
-    messages[messages.length - 1].role !== "user"
-  ) {
-    response
-      .status(400)
-      .json({ error: "The last message must be a user message." });
-    return;
-  }
-
-  response.status(200);
-  response.set({
-    "Content-Type": "application/x-ndjson; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  response.flushHeaders?.();
-
-  let closed = false;
-  response.on("close", () => {
-    closed = true;
-  });
-
-  const send = (event) => {
-    if (closed || response.writableEnded) return;
-    response.write(`${JSON.stringify(event)}\n`);
-  };
-
-  try {
-    await runAgent({
-      messages,
-      send,
-      isClosed: () => closed || response.writableEnded,
-    });
-  } catch (error) {
-    console.error("[agent]", error);
-    send({
-      type: "error",
-      message: "The agent hit an unexpected error. Check the server logs.",
-    });
-  } finally {
-    if (!closed && !response.writableEnded) {
-      send({ type: "done" });
-      response.end();
-    }
-  }
+  await streamAgent({ messages, res: response });
 });
 
 if (existsSync(distDir)) {
